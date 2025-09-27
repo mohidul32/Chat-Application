@@ -1,0 +1,127 @@
+{% extends 'base.html' %}
+
+{% block content %}
+<div class="row h-100">
+    <!-- Sidebar -->
+    <div class="col-md-4 col-lg-3 border-end">
+        <div class="d-flex justify-content-between align-items-center p-3 border-bottom">
+            <h5 class="mb-0">Chats</h5>
+            <div class="dropdown">
+                <button class="btn btn-outline-primary btn-sm dropdown-toggle" type="button" data-bs-toggle="dropdown">
+                    New
+                </button>
+                <ul class="dropdown-menu">
+                    <li><a class="dropdown-item" href="#" data-bs-toggle="modal" data-bs-target="#newChatModal">
+                        <i class="bi bi-person-plus"></i> Start Private Chat
+                    </a></li>
+                    <li><a class="dropdown-item" href="{% url 'chat:create_group' %}">
+                        <i class="bi bi-people"></i> Create Group
+                    </a></li>
+                </ul>
+            </div>
+        </div>
+
+        <!-- Chat Rooms List -->
+        <div class="chat-list" style="height: calc(100vh - 200px); overflow-y: auto;">
+            {% for room in rooms %}
+            <a href="{% url 'chat:room' room_id=room.id %}"
+               class="list-group-item list-group-item-action {% if current_room.id == room.id %}active{% endif %}">
+                <div class="d-flex justify-content-between">
+                    <div class="flex-grow-1">
+                        <h6 class="mb-1">
+                            {% if room.room_type == 'group' %}
+                                <i class="bi bi-people"></i> {{ room.name }}
+                            {% else %}
+                                <i class="bi bi-person"></i> {{ room }}
+                            {% endif %}
+                        </h6>
+                        {% if room.last_message %}
+                            <p class="mb-1 text-muted small">
+                                {% if room.last_message.message_type == 'text' %}
+                                    {{ room.last_message.content|truncatechars:40 }}
+                                {% else %}
+                                    <i>{{ room.last_message.get_message_type_display }}</i>
+                                {% endif %}
+                            </p>
+                            <small class="text-muted">{{ room.last_message.timestamp|timesince }} ago</small>
+                        {% endif %}
+                    </div>
+                    {% if room.unread_count > 0 %}
+                        <span class="badge bg-primary rounded-pill">{{ room.unread_count }}</span>
+                    {% endif %}
+                </div>
+            </a>
+            {% empty %}
+            <div class="p-3 text-center text-muted">
+                <p>No chats yet.</p>
+                <p><small>Start a conversation!</small></p>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+
+    <!-- Main Content -->
+    <div class="col-md-8 col-lg-9">
+        {% block chat_content %}
+        <div class="d-flex align-items-center justify-content-center h-100">
+            <div class="text-center text-muted">
+                <h4>Welcome to Chat App!</h4>
+                <p>Select a chat to start messaging</p>
+            </div>
+        </div>
+        {% endblock %}
+    </div>
+</div>
+
+<!-- New Chat Modal -->
+<div class="modal fade" id="newChatModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Start New Chat</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <input type="text" class="form-control mb-3" id="userSearch" placeholder="Search users...">
+                <div id="userResults"></div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+// User search functionality
+document.getElementById('userSearch').addEventListener('input', function() {
+    const query = this.value;
+    if (query.length < 2) {
+        document.getElementById('userResults').innerHTML = '';
+        return;
+    }
+
+    fetch(`{% url 'chat:search_users' %}?q=${query}`)
+        .then(response => response.json())
+        .then(data => {
+            const results = document.getElementById('userResults');
+            results.innerHTML = '';
+
+            data.users.forEach(user => {
+                const userDiv = document.createElement('div');
+                userDiv.className = 'list-group-item list-group-item-action';
+                userDiv.innerHTML = `
+                    <div class="d-flex justify-content-between align-items-center">
+                        <div>
+                            <strong>${user.name}</strong>
+                            <br><small class="text-muted">@${user.username}</small>
+                        </div>
+                        <div>
+                            ${user.is_online ? '<span class="badge bg-success">Online</span>' : '<span class="badge bg-secondary">Offline</span>'}
+                            <a href="{% url 'chat:start_private_chat' user_id=0 %}".replace('0', user.id) class="btn btn-sm btn-primary ms-2">Chat</a>
+                        </div>
+                    </div>
+                `;
+                results.appendChild(userDiv);
+            });
+        });
+});
+</script>
+{% endblock %}

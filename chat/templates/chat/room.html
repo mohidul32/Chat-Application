@@ -1,0 +1,152 @@
+{% extends 'chat/base_chat.html' %}
+
+{% block chat_content %}
+<div class="d-flex flex-column h-100">
+    <!-- Chat Header -->
+    <div class="border-bottom p-3">
+        <div class="d-flex justify-content-between align-items-center">
+            <div>
+                <h5 class="mb-0">
+                    {% if room.room_type == 'group' %}
+                        <i class="bi bi-people"></i> {{ room.name }}
+                    {% else %}
+                        <i class="bi bi-person"></i> {{ room }}
+                    {% endif %}
+                </h5>
+                <small class="text-muted">
+                    {{ members.count }} member{{ members.count|pluralize }}
+                    {% if room.room_type == 'private' %}
+                        {% for member in members %}
+                            {% if member.user != user %}
+                                - {{ member.user.is_online|yesno:"Online,Offline" }}
+                            {% endif %}
+                        {% endfor %}
+                    {% endif %}
+                </small>
+            </div>
+            <div class="dropdown">
+                <button class="btn btn-outline-secondary btn-sm dropdown-toggle" data-bs-toggle="dropdown">
+                    Options
+                </button>
+                <ul class="dropdown-menu">
+                    {% if room.room_type == 'group' %}
+                        <li><a class="dropdown-item text-danger" href="{% url 'chat:leave_room' room_id=room.id %}">
+                            <i class="bi bi-box-arrow-left"></i> Leave Group
+                        </a></li>
+                    {% endif %}
+                </ul>
+            </div>
+        </div>
+    </div>
+
+    <!-- Messages Container -->
+    <div class="flex-grow-1 p-3" id="messagesContainer" style="overflow-y: auto; height: calc(100vh - 300px);">
+        {% for message in messages %}
+            <div class="message mb-3 {% if message.sender == user %}text-end{% endif %}">
+                <div class="d-inline-block max-width-75 {% if message.sender == user %}bg-primary text-white{% else %}bg-light{% endif %} rounded p-2">
+                    {% if message.sender != user %}
+                        <small class="fw-bold text-primary">{{ message.sender.username }}</small><br>
+                    {% endif %}
+
+                    {% if message.message_type == 'text' %}
+                        {{ message.content|linebreaks }}
+                    {% elif message.message_type == 'file' %}
+                        <i class="bi bi-file-earmark"></i>
+                        <a href="{{ message.file.url }}" target="_blank" class="text-decoration-none">
+                            {{ message.file_name|default:"File" }}
+                        </a>
+                    {% elif message.message_type == 'system' %}
+                        <em class="text-muted">{{ message.content }}</em>
+                    {% endif %}
+
+                    <br><small class="{% if message.sender == user %}text-light{% else %}text-muted{% endif %}">
+                        {{ message.timestamp|date:"H:i" }}
+                        {% if message.is_edited %}<em>(edited)</em>{% endif %}
+                    </small>
+                </div>
+            </div>
+        {% empty %}
+            <div class="text-center text-muted">
+                <p>No messages yet. Start the conversation!</p>
+            </div>
+        {% endfor %}
+    </div>
+
+    <!-- Message Input -->
+    <div class="border-top p-3">
+        <form method="post" enctype="multipart/form-data" id="messageForm">
+            {% csrf_token %}
+            <div class="input-group">
+                <input type="file" class="d-none" id="fileInput" name="file" accept="image/*,application/pdf,.doc,.docx,.txt">
+                <button type="button" class="btn btn-outline-secondary" onclick="document.getElementById('fileInput').click()">
+                    <i class="bi bi-paperclip"></i>
+                </button>
+                <textarea name="content" class="form-control" placeholder="Type your message..."
+                         rows="1" style="resize: none;" id="messageInput"></textarea>
+                <button type="submit" class="btn btn-primary">
+                    <i class="bi bi-send"></i>
+                </button>
+            </div>
+            <small class="text-muted" id="fileInfo"></small>
+        </form>
+    </div>
+</div>
+
+<style>
+.max-width-75 {
+    max-width: 75%;
+}
+
+.message {
+    word-wrap: break-word;
+}
+
+#messagesContainer {
+    scroll-behavior: smooth;
+}
+</style>
+
+<script>
+// Auto-scroll to bottom
+function scrollToBottom() {
+    const container = document.getElementById('messagesContainer');
+    container.scrollTop = container.scrollHeight;
+}
+
+// File input change handler
+document.getElementById('fileInput').addEventListener('change', function() {
+    const fileInfo = document.getElementById('fileInfo');
+    if (this.files.length > 0) {
+        fileInfo.textContent = `Selected: ${this.files[0].name}`;
+    } else {
+        fileInfo.textContent = '';
+    }
+});
+
+// Auto-resize textarea
+document.getElementById('messageInput').addEventListener('input', function() {
+    this.style.height = 'auto';
+    this.style.height = (this.scrollHeight) + 'px';
+});
+
+// Submit on Enter (but not Shift+Enter)
+document.getElementById('messageInput').addEventListener('keydown', function(e) {
+    if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        document.getElementById('messageForm').submit();
+    }
+});
+
+// Scroll to bottom on page load
+window.addEventListener('load', scrollToBottom);
+</script>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+// Set current room for sidebar highlighting
+{% if room %}
+    window.currentRoomId = '{{ room.id }}';
+{% endif %}
+</script>
+{% endblock %}
