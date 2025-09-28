@@ -20,6 +20,7 @@ INSTALLED_APPS = [
     'corsheaders',
     'accounts',
     'chat',
+    'channels'
 ]
 
 MIDDLEWARE = [
@@ -88,3 +89,15 @@ REST_FRAMEWORK = {
 
 # Custom User Model
 AUTH_USER_MODEL = 'accounts.CustomUser'
+
+# Channels configuration
+ASGI_APPLICATION = 'chatproject.asgi.application'
+
+CHANNEL_LAYERS = {
+    'default': {
+        'BACKEND': 'channels_redis.core.RedisChannelLayer',
+        'CONFIG': {
+            "hosts": [('127.0.0.1', 6379)],
+        },
+    },
+}

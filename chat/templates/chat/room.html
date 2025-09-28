@@ -15,10 +15,11 @@
                 </h5>
                 <small class="text-muted">
                     {{ members.count }} member{{ members.count|pluralize }}
+                    • <span id="connectionStatus" class="badge bg-secondary">Connecting...</span>
                     {% if room.room_type == 'private' %}
                         {% for member in members %}
                             {% if member.user != user %}
-                                - {{ member.user.is_online|yesno:"Online,Offline" }}
+                                • {{ member.user.is_online|yesno:"Online,Offline" }}
                             {% endif %}
                         {% endfor %}
                     {% endif %}
@@ -37,6 +38,10 @@
                 </ul>
             </div>
         </div>
+    </div>
+    
+    <!-- Typing Indicator -->
+    <div id="typingIndicator" class="px-3 py-1" style="display: none; min-height: 20px;">
     </div>
 
     <!-- Messages Container -->
@@ -73,21 +78,47 @@
     </div>
 
     <!-- Message Input -->
-    <div class="border-top p-3">
+    <div class="border-top p-3 bg-light">
         <form method="post" enctype="multipart/form-data" id="messageForm">
             {% csrf_token %}
             <div class="input-group">
-                <input type="file" class="d-none" id="fileInput" name="file" accept="image/*,application/pdf,.doc,.docx,.txt">
-                <button type="button" class="btn btn-outline-secondary" onclick="document.getElementById('fileInput').click()">
+                <!-- Hidden file input -->
+                <input type="file" class="d-none" id="fileInput" name="file" 
+                       accept="image/*,application/pdf,.doc,.docx,.txt,.zip">
+                
+                <!-- File upload button -->
+                <button type="button" class="btn btn-outline-secondary" id="fileButton" 
+                        onclick="document.getElementById('fileInput').click()" title="Upload file">
                     <i class="bi bi-paperclip"></i>
                 </button>
-                <textarea name="content" class="form-control" placeholder="Type your message..."
+                
+                <!-- Message textarea -->
+                <textarea name="content" class="form-control" placeholder="Type your message..." 
                          rows="1" style="resize: none;" id="messageInput"></textarea>
-                <button type="submit" class="btn btn-primary">
-                    <i class="bi bi-send"></i>
+                
+                <!-- Send button -->
+                <button type="submit" class="btn btn-primary" id="sendButton" title="Send message">
+                    <i class="bi bi-send-fill"></i>
                 </button>
             </div>
-            <small class="text-muted" id="fileInfo"></small>
+            
+            <!-- File info display -->
+            <div id="fileInfo" class="mt-2" style="display: none;">
+                <small class="text-muted">
+                    <i class="bi bi-file-earmark"></i> 
+                    <span id="fileName"></span>
+                    <button type="button" class="btn btn-sm btn-outline-danger ms-2" id="removeFile">
+                        <i class="bi bi-x"></i> Remove
+                    </button>
+                </small>
+            </div>
+            
+            <!-- Form errors -->
+            {% if form.errors %}
+                <div class="alert alert-danger mt-2">
+                    {{ form.errors }}
+                </div>
+            {% endif %}
         </form>
     </div>
 </div>
@@ -113,33 +144,243 @@ function scrollToBottom() {
     container.scrollTop = container.scrollHeight;
 }
 
-// File input change handler
-document.getElementById('fileInput').addEventListener('change', function() {
+// File upload handling
+document.addEventListener('DOMContentLoaded', function() {
+    const fileInput = document.getElementById('fileInput');
     const fileInfo = document.getElementById('fileInfo');
-    if (this.files.length > 0) {
-        fileInfo.textContent = `Selected: ${this.files[0].name}`;
+    const fileName = document.getElementById('fileName');
+    const fileButton = document.getElementById('fileButton');
+    const removeFileBtn = document.getElementById('removeFile');
+    
+    if (fileInput && fileInfo && fileName && fileButton) {
+        fileInput.addEventListener('change', function() {
+            if (this.files.length > 0) {
+                const file = this.files[0];
+                fileName.textContent = file.name;
+                fileInfo.style.display = 'block';
+                fileButton.classList.add('btn-success');
+                fileButton.classList.remove('btn-outline-secondary');
+            } else {
+                fileInfo.style.display = 'none';
+                fileButton.classList.remove('btn-success');
+                fileButton.classList.add('btn-outline-secondary');
+            }
+        });
+
+        removeFileBtn.addEventListener('click', function() {
+            fileInput.value = '';
+            fileInfo.style.display = 'none';
+            fileButton.classList.remove('btn-success');
+            fileButton.classList.add('btn-outline-secondary');
+        });
+    }
+
+    // Auto-resize textarea
+    const messageInput = document.getElementById('messageInput');
+    if (messageInput) {
+        messageInput.addEventListener('input', function() {
+            this.style.height = 'auto';
+            this.style.height = Math.min(this.scrollHeight, 120) + 'px';
+        });
+
+        // Submit on Enter (but not Shift+Enter)
+        messageInput.addEventListener('keydown', function(e) {
+            if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                document.getElementById('messageForm').submit();
+            }
+        });
+    }
+
+    // Scroll to bottom on page load
+    scrollToBottom();
+});
+
+// WebSocket connection
+const roomId = '{{ room.id }}';
+const currentUser = '{{ user.username }}';
+
+let chatSocket = null;
+let typingTimer = null;
+let isTyping = false;
+
+function connectWebSocket() {
+    const wsScheme = window.location.protocol == "https:" ? "wss" : "ws";
+    const wsPath = wsScheme + '://' + window.location.host + '/ws/chat/' + roomId + '/';
+    
+    chatSocket = new WebSocket(wsPath);
+    
+    chatSocket.onopen = function(e) {
+        console.log('WebSocket connected');
+        const statusElement = document.getElementById('connectionStatus');
+        if (statusElement) {
+            statusElement.className = 'badge bg-success';
+            statusElement.textContent = 'Connected';
+        }
+    };
+    
+    chatSocket.onmessage = function(e) {
+        const data = JSON.parse(e.data);
+        console.log('Received:', data);
+        
+        if (data.type === 'message') {
+            displayMessage(data.message);
+        } else if (data.type === 'connection') {
+            console.log('Connection confirmed:', data.message);
+        } else if (data.type === 'user_status') {
+            displaySystemMessage(data.message);
+        } else if (data.type === 'typing') {
+            handleTypingIndicator(data);
+        }
+    };
+    
+    chatSocket.onclose = function(e) {
+        console.log('WebSocket disconnected');
+        const statusElement = document.getElementById('connectionStatus');
+        if (statusElement) {
+            statusElement.className = 'badge bg-danger';
+            statusElement.textContent = 'Disconnected';
+        }
+        
+        // Attempt to reconnect after 3 seconds
+        setTimeout(connectWebSocket, 3000);
+    };
+    
+    chatSocket.onerror = function(e) {
+        console.error('WebSocket error:', e);
+    };
+}
+
+// Display new message
+function displayMessage(message) {
+    const messagesContainer = document.getElementById('messagesContainer');
+    const isOwnMessage = message.sender === currentUser;
+    
+    const messageDiv = document.createElement('div');
+    messageDiv.className = 'message mb-3 ' + (isOwnMessage ? 'text-end' : '');
+    
+    const messageContent = document.createElement('div');
+    messageContent.className = 'd-inline-block max-width-75 rounded p-2 ' + 
+        (isOwnMessage ? 'bg-primary text-white' : 'bg-light');
+    
+    let htmlContent = '';
+    if (!isOwnMessage) {
+        htmlContent += '<small class="fw-bold text-primary">' + message.sender + '</small><br>';
+    }
+    htmlContent += message.content.replace(/\n/g, '<br>');
+    htmlContent += '<br><small class="' + (isOwnMessage ? 'text-light' : 'text-muted') + '">';
+    htmlContent += message.timestamp + '</small>';
+    
+    messageContent.innerHTML = htmlContent;
+    messageDiv.appendChild(messageContent);
+    messagesContainer.appendChild(messageDiv);
+    
+    scrollToBottom();
+}
+
+// Display system message
+function displaySystemMessage(message) {
+    const messagesContainer = document.getElementById('messagesContainer');
+    const messageDiv = document.createElement('div');
+    messageDiv.className = 'text-center my-2';
+    messageDiv.innerHTML = '<small class="text-muted"><em>' + message + '</em></small>';
+    messagesContainer.appendChild(messageDiv);
+    scrollToBottom();
+}
+
+// Handle typing indicator
+function handleTypingIndicator(data) {
+    const typingDiv = document.getElementById('typingIndicator');
+    
+    if (data.is_typing) {
+        typingDiv.innerHTML = '<small class="text-muted"><em>' + data.user + ' is typing...</em></small>';
+        typingDiv.style.display = 'block';
     } else {
-        fileInfo.textContent = '';
+        typingDiv.style.display = 'none';
+    }
+}
+
+// Send message via WebSocket
+function sendMessage(content) {
+    if (chatSocket && chatSocket.readyState === WebSocket.OPEN) {
+        chatSocket.send(JSON.stringify({
+            'type': 'chat_message',
+            'message': content
+        }));
+        return true;
+    }
+    return false;
+}
+
+// Send typing indicator
+function sendTypingIndicator(isTyping) {
+    if (chatSocket && chatSocket.readyState === WebSocket.OPEN) {
+        chatSocket.send(JSON.stringify({
+            'type': 'typing',
+            'is_typing': isTyping
+        }));
+    }
+}
+
+
+// Updated form handler that waits for WebSocket
+document.addEventListener('DOMContentLoaded', function() {
+    const messageForm = document.getElementById('messageForm');
+    const messageInput = document.getElementById('messageInput');
+
+    if (messageForm) {
+        messageForm.addEventListener('submit', function(e) {
+            e.preventDefault(); // Always prevent default form submission
+
+            const content = messageInput.value.trim();
+
+            if (content) {
+                // Wait for WebSocket if it's connecting
+                if (chatSocket === null) {
+                    console.log('WebSocket not initialized yet, waiting...');
+                    setTimeout(() => {
+                        this.dispatchEvent(new Event('submit'));
+                    }, 500);
+                    return;
+                }
+
+                if (chatSocket.readyState === WebSocket.CONNECTING) {
+                    console.log('WebSocket still connecting, waiting...');
+                    setTimeout(() => {
+                        this.dispatchEvent(new Event('submit'));
+                    }, 500);
+                    return;
+                }
+
+                if (chatSocket.readyState === WebSocket.OPEN) {
+                    console.log('Sending via WebSocket');
+                    chatSocket.send(JSON.stringify({
+                        'type': 'chat_message',
+                        'message': content
+                    }));
+
+                    messageInput.value = '';
+                    messageInput.style.height = 'auto';
+                } else {
+                    console.log('WebSocket failed, connection status:', chatSocket.readyState);
+                    alert('Connection failed. Please refresh the page.');
+                }
+            }
+        });
+    }
+
+    // Connect WebSocket immediately
+    connectWebSocket();
+});
+
+// Cleanup on page unload
+window.addEventListener('beforeunload', function() {
+    if (chatSocket) {
+        chatSocket.close();
     }
 });
-
-// Auto-resize textarea
-document.getElementById('messageInput').addEventListener('input', function() {
-    this.style.height = 'auto';
-    this.style.height = (this.scrollHeight) + 'px';
-});
-
-// Submit on Enter (but not Shift+Enter)
-document.getElementById('messageInput').addEventListener('keydown', function(e) {
-    if (e.key === 'Enter' && !e.shiftKey) {
-        e.preventDefault();
-        document.getElementById('messageForm').submit();
-    }
-});
-
-// Scroll to bottom on page load
-window.addEventListener('load', scrollToBottom);
 </script>
+
 {% endblock %}
 
 {% block extra_js %}
